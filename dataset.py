@@ -4,47 +4,32 @@ Author:
     Mohammad Mahbubuzzaman (tachyon77@gmail.com)
 """
 import logging
-import os
-import queue
-import re
-import shutil
-import string
-import torch
 import torch.nn.functional as F
 import torch.utils.data as data
-import tqdm
-import numpy as np
+from torch.utils.data import dataset
+import torch
 import ujson as json
 from collections import Counter
 
 
-class MyDataset(data.Dataset):
-    """My Dataset.
+class ImageDataset(data.Dataset):
+    """Random Dataset.
 
-    Each item in the dataset is a tuple with the following entries (in order):        
-        - y: Correct label.
-        - id: ID of the example.
+    The dataset is a tensor with first dimension as N and remaining as image dimension.
 
     Args:
-        data_path (str): Path to .npz file containing pre-processed dataset.
+        data_path (str): Path to .npz file containing dataset.
     """
-    def __init__(self, data_path):
-        super(MyDataset, self).__init__()
+    def __init__(self, data_path='/home/mahbub/research/flat-resnet/random_images.npz'):
+        super(ImageDataset, self).__init__()
 
-        dataset = np.load(data_path)
-       
-        self.ys = torch.from_numpy(dataset['ys']).long()    
-        self.ids = torch.from_numpy(dataset['ids']).long()
+        self.dataset = torch.load(data_path)
 
     def __getitem__(self, idx):
-        idx = self.ids[idx]
-        example = (            
-            self.ys[idx],            
-            self.ids[idx]
-        )
-
-        return example
+        return self.dataset[idx]
 
     def __len__(self):
-        return len(self.ids)
+        return self.dataset.shape[0] # Since first dimension is the N
+
+
 

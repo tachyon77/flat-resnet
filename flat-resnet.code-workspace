@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../vision/resnet"
+		}
+	],
+	"settings": {
+		"python.pythonPath": "/home/mahbub/anaconda3/envs/latest_torch/bin/python"
+	}
+}

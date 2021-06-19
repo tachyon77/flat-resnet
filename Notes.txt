@@ -1,0 +1,2 @@
+This is a nice utility to make a tensor into an image:
+from torchvision.utils import save_image

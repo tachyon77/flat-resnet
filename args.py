@@ -92,15 +92,6 @@ def get_train_args():
 
     args = parser.parse_args()
 
-    if args.metric_name == 'NLL':
-        # Best checkpoint is the one that minimizes negative log-likelihood
-        args.maximize_metric = False
-    elif args.metric_name in ('EM', 'F1'):
-        # Best checkpoint is the one that maximizes EM or F1
-        args.maximize_metric = True
-    else:
-        raise ValueError(f'Unrecognized metric name: "{args.metric_name}"')
-
     return args
 
 
@@ -116,15 +107,16 @@ def get_test_args():
                         default='dev',
                         choices=('train', 'dev', 'test'),
                         help='Split to use for testing.')
-    parser.add_argument('--sub_file',
+    parser.add_argument('--input_data_file',
                         type=str,
-                        default='submission.csv',
-                        help='Name for submission file.')
+                        default='images.npz',
+                        help='File containing input image tensors.')
 
     # Require load_path for test.py
     args = parser.parse_args()
-    if not args.load_path:
-        raise argparse.ArgumentError('Missing required argument --load_path')
+    # TODO re enable this check
+    #if not args.load_path:
+    #    raise argparse.ArgumentError('Missing required argument --load_path')
 
     return args
 
@@ -168,7 +160,7 @@ def add_train_test_args(parser):
                         help='Base directory for saving information.')
     parser.add_argument('--batch_size',
                         type=int,
-                        default=64,
+                        default=256,
                         help='Batch size per GPU. Scales automatically when \
                               multiple GPUs are available.')   
     parser.add_argument('--hidden_size',

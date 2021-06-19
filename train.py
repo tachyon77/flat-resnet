@@ -23,7 +23,7 @@ from tqdm import tqdm
 from ujson import load as json_load
 from util import collate_fn
 from dataset import MyDataset
-
+import resnet
 
 def main(args):
     # Set up logging and devices
@@ -47,7 +47,7 @@ def main(args):
     '''
         TODO: YOUR MODEL HERE
     '''
-    model = None 
+    model = resnet.resnet50()
 
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:

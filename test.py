@@ -1,4 +1,4 @@
-"""Test a model and generate submission CSV.
+"""Test a model.
 
 Usage:
     > python test.py --split SPLIT --load_path PATH --name NAME
@@ -8,7 +8,7 @@ Usage:
     > NAME is a name to identify the test run
 
 Author:
-    Mohammad Mahbubuzzaman (tachyon77@gmail.com)s
+    Mohammad Mahbubuzzaman (tachyon77@gmail.com)
 """
 
 import csv
@@ -17,19 +17,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.data as data
 import util
+import resnet
 
 from args import get_test_args
+from dataset import ImageDataset
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
-from dataset import MyDataset
 
 
 def main(args):
+
     # Set up logging
     args.save_dir = util.get_save_dir(args.save_dir, args.name, training=False)
     log = util.get_logger(args.save_dir, args.name)
@@ -37,101 +38,77 @@ def main(args):
     device, gpu_ids = util.get_available_devices()
     args.batch_size *= max(1, len(gpu_ids))
 
-    # Get embeddings
-    log.info('Loading embeddings...')
-    word_vectors = util.torch_from_json(args.word_emb_file)
+    seed = 42
+    torch.manual_seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
     # Get model
-    log.info('Building model...')
-    model = None # TODO: Your model here
+    #log.info(f'Loading checkpoint from {args.load_path}...')
 
+    model = resnet.resnet50()
     model = nn.DataParallel(model, gpu_ids)
-    log.info(f'Loading checkpoint from {args.load_path}...')
-    model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
+    #log.info(f'Loading checkpoint from {args.load_path}...')
+    #model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
     model = model.to(device)
     model.eval()
 
     # Get data loader
-    log.info('Building dataset...')
-    record_file = vars(args)[f'{args.split}_record_file']
-    dataset = MyDataset(record_file, args.use_squad_v2)
+    log.info('loading dataset...')
+    input_data_file = '/home/mahbub/research/flat-resnet/10000_random_chw_tensors.npz' 
+                        #vars(args)[f'{args.input_data_file}']
+    dataset = ImageDataset(input_data_file)
     data_loader = data.DataLoader(dataset,
                                   batch_size=args.batch_size,
                                   shuffle=False,
                                   num_workers=args.num_workers,
-                                  collate_fn=collate_fn)
+                                  collate_fn=None)
+
+    #class_label_file = '/home/mahbub/research/flat-resnet/imagenet_classes.txt'
+    # Read the categories
+    #with open(class_label_file, "r") as f:
+    #    categories = [s.strip() for s in f.readlines()]
 
     # Evaluate
-    log.info(f'Evaluating on {args.split} split...')
-    nll_meter = util.AverageMeter()
-    pred_dict = {}  # Predictions for TensorBoard
-    sub_dict = {}   # Predictions for submission
-    eval_file = vars(args)[f'{args.split}_eval_file']
-    with open(eval_file, 'r') as fh:
-        gold_dict = json_load(fh)
+    log.info(f'Running inference ...')
+
+    output = torch.zeros(len(dataset), 1000) # TODO: 1000 is number of class or resnet output size, remove hard coding.
+    out_idx = 0
     with torch.no_grad(), \
             tqdm(total=len(dataset)) as progress_bar:
-         for features, y, ids in data_loader:
-            # Setup for forward        
-        
-            batch_size = 1  # TODO
+         for images in data_loader:
+            # Setup for forward
+            images = images.to(device)
+  
+            batch_size = images.shape[0]
+            #print ("batch size is {}".format(batch_size))
 
+            #print("Input is : {}".format(images[0,0,0,:10]))
             # Forward
-            (log_p1, log_p2), ( _, _) = model(features)
-            y = y.to(device)
-            loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
-            nll_meter.update(loss.item(), batch_size)
+            output[out_idx:out_idx+batch_size] = model(images)
+            out_idx += batch_size
+            
+            #print("output shape is {}".format(output.shape))
+            #print("Output is: {}".format(output))
 
-            # Get F1 and EM scores
-            p1, p2 = log_p1.exp(), log_p2.exp()
-            starts, ends = util.discretize(p1, p2, args.max_ans_len, args.use_squad_v2)
+            #probabilities = torch.nn.functional.softmax(output, dim=1)
+            #print("probabilities shape is {}".format(probabilities.shape))
+            #print ("probabilities sum = {}".format(probabilities.sum(axis=1)))
+
+            # Show top categories per image
+            #K = 5
+            #top_prob, top_catid = torch.topk(probabilities, K)
+
+            #print("top catid shape is {}".format(top_catid.shape))
+
+            #for i in range(top_prob.shape[0]):
+            #    for k in range(K):
+            #        print(categories[top_catid[i,k]], top_prob[i,k].item())
 
             # Log info
             progress_bar.update(batch_size)
-            if args.split != 'test':
-                # No labels for the test set, so NLL would be invalid
-                progress_bar.set_postfix(NLL=nll_meter.avg)
 
-            idx2pred, uuid2pred = util.convert_tokens(gold_dict,
-                                                      ids.tolist(),
-                                                      starts.tolist(),
-                                                      ends.tolist(),
-                                                      args.use_squad_v2)
-            pred_dict.update(idx2pred)
-            sub_dict.update(uuid2pred)
-
-    # Log results (except for test set, since it does not come with labels)
-    if args.split != 'test':
-        results = util.eval_dicts(gold_dict, pred_dict, args.use_squad_v2)
-        results_list = [('NLL', nll_meter.avg),
-                        ('F1', results['F1']),
-                        ('EM', results['EM'])]
-        if args.use_squad_v2:
-            results_list.append(('AvNA', results['AvNA']))
-        results = OrderedDict(results_list)
-
-        # Log to console
-        results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in results.items())
-        log.info(f'{args.split.title()} {results_str}')
-
-        # Log to TensorBoard
-        tbx = SummaryWriter(args.save_dir)
-        util.visualize(tbx,
-                       pred_dict=pred_dict,
-                       eval_path=eval_file,
-                       step=0,
-                       split=args.split,
-                       num_visuals=args.num_visuals)
-
-    # Write submission file
-    sub_path = join(args.save_dir, args.split + '_' + args.sub_file)
-    log.info(f'Writing submission file to {sub_path}...')
-    with open(sub_path, 'w', newline='', encoding='utf-8') as csv_fh:
-        csv_writer = csv.writer(csv_fh, delimiter=',')
-        csv_writer.writerow(['Id', 'Predicted'])
-        for uuid in sorted(sub_dict):
-            csv_writer.writerow([uuid, sub_dict[uuid]])
-
-
+    # Write output to a file
+    torch.save(output, "resnet50_output")
 if __name__ == '__main__':
     main(get_test_args())
