@@ -55,7 +55,7 @@ def main(args):
 
     # Get data loader
     log.info('loading dataset...')
-    input_data_file = '/home/mahbub/research/flat-resnet/10000_random_chw_tensors.npz' 
+    input_data_file = '/home/mahbub/research/flat-resnet/data/dev_images.pt' 
                         #vars(args)[f'{args.input_data_file}']
     dataset = ImageDataset(input_data_file)
     data_loader = data.DataLoader(dataset,

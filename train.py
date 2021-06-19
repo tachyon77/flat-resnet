@@ -17,13 +17,13 @@ import util
 from args import get_train_args
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
-from util import collate_fn
-from dataset import MyDataset
-import resnet
+from dataset import ResnetOutputDataset
+from flatnet import FlatNet
+
+loss_fn = nn.MSELoss()
 
 def main(args):
     # Set up logging and devices
@@ -35,7 +35,7 @@ def main(args):
     args.batch_size *= max(1, len(args.gpu_ids))
 
     # Set random seed
-    log.info(f'Using random seed {args.seed}...')
+    log.info(f'Using fixed seed {args.seed}...')
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -43,11 +43,7 @@ def main(args):
 
     # Get model
     log.info('Building model...')
-    
-    '''
-        TODO: YOUR MODEL HERE
-    '''
-    model = resnet.resnet50()
+    model = FlatNet((3,256,256), 1000)
 
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
@@ -73,18 +69,26 @@ def main(args):
 
     # Get data loader
     log.info('Building dataset...')
-    train_dataset = MyDataset(args.train_record_file)
+    
+    train_images_file='/home/mahbub/research/flat-resnet/data/train_images.pt'
+    train_output_file='/home/mahbub/research/flat-resnet/data/train_output.pt'    
+    train_dataset = ResnetOutputDataset(train_images_file, train_output_file)
+
     train_loader = data.DataLoader(train_dataset,
                                    batch_size=args.batch_size,
                                    shuffle=True,
                                    num_workers=args.num_workers,
-                                   collate_fn=collate_fn)
-    dev_dataset = MyDataset(args.dev_record_file, args.use_squad_v2)
+                                   collate_fn=None)
+   
+    dev_images_file='/home/mahbub/research/flat-resnet/data/dev_images.pt'
+    dev_output_file='/home/mahbub/research/flat-resnet/data/dev_output.pt'    
+    dev_dataset = ResnetOutputDataset(dev_images_file, dev_output_file)
+
     dev_loader = data.DataLoader(dev_dataset,
                                  batch_size=args.batch_size,
                                  shuffle=False,
                                  num_workers=args.num_workers,
-                                 collate_fn=collate_fn)
+                                 collate_fn=None)
 
     # Train
     log.info('Training...')
@@ -95,17 +99,17 @@ def main(args):
         log.info(f'Starting epoch {epoch}...')
         with torch.enable_grad(), \
                 tqdm(total=len(train_loader.dataset)) as progress_bar:
-            for features, ys, ids in train_loader:
+            for features, y in train_loader:
                 # Setup for forward                
 
-                batch_size = 1 # TODO:
+                batch_size = args.batch_size
 
                 optimizer.zero_grad()
 
                 # Forward
                 outputs = model(features)
                 y = y.to(device)
-                loss = loss_fn (outputs, y) # TODO
+                loss = loss_fn (outputs, y)
                                 
                 loss_val = loss.item()
 
@@ -113,8 +117,7 @@ def main(args):
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
-                scheduler.step(step // batch_size)
-                ema(model, step // batch_size)
+                scheduler.step(step // batch_size)                
 
                 # Log info
                 step += batch_size
@@ -125,7 +128,8 @@ def main(args):
                 tbx.add_scalar('train/LR',
                                optimizer.param_groups[0]['lr'],
                                step)
-
+                                
+                                
                 steps_till_eval -= batch_size
                 if steps_till_eval <= 0:
                     steps_till_eval = args.eval_steps
@@ -133,8 +137,7 @@ def main(args):
                     # Evaluate and save checkpoint
                     log.info(f'Evaluating at step {step}...')
                     ema.assign(model)
-                    results, pred_dict = evaluate(model, dev_loader, device,
-                                                  args.dev_eval_file)
+                    results = evaluate(model, dev_loader, device)
                     saver.save(step, model, results[args.metric_name], device)
                     ema.resume(model)
 
@@ -146,36 +149,25 @@ def main(args):
                     log.info('Visualizing in TensorBoard...')
                     for k, v in results.items():
                         tbx.add_scalar(f'dev/{k}', v, step)
-                    util.visualize(tbx,
-                                   pred_dict=pred_dict,
-                                   eval_path=args.dev_eval_file,
-                                   step=step,
-                                   split='dev',
-                                   num_visuals=args.num_visuals)
+                
 
-
-def evaluate(model, data_loader, device, eval_file):
+def evaluate(model, data_loader, device):
     nll_meter = util.AverageMeter()
 
     model.eval()
-    pred_dict = {}
-    with open(eval_file, 'r') as fh:
-        gold_dict = json_load(fh)
+    
     with torch.no_grad(), \
             tqdm(total=len(data_loader.dataset)) as progress_bar:
-        for cw_idxs, cw_dep_paths, cc_idxs, qw_idxs, qw_dep_paths, qc_idxs, y1, y2, ids in data_loader:
+        for features, y in data_loader:
             # Setup for forward            
 
-            batch_size = 1 # TODO:
+            batch_size = y.shape[0]
 
             # Forward
-            outputs = model(featues)
+            outputs = model(features)
             y = y.to(device)
-            loss = loss_fn(outputs, y) # TODO
+            loss = loss_fn(outputs, y)
             nll_meter.update(loss.item(), batch_size)
-
-            # Get F1 and EM scores
-            p1, p2 = log_p1.exp(), log_p2.exp()
             
             # Log info
             progress_bar.update(batch_size)
@@ -184,14 +176,11 @@ def evaluate(model, data_loader, device, eval_file):
 
     model.train()
 
-    results = util.eval_dicts(gold_dict, pred_dict, use_squad_v2)
-    results_list = [('NLL', nll_meter.avg),
-                    ('F1', results['F1']),
-                    ('EM', results['EM'])]
+    results_list = [('NLL', nll_meter.avg)]
 
     results = OrderedDict(results_list)
 
-    return results, pred_dict
+    return results
 
 
 if __name__ == '__main__':

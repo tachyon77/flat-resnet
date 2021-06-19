@@ -70,8 +70,8 @@ def get_train_args():
                         help='Probability of zeroing an activation in dropout layers.')
     parser.add_argument('--metric_name',
                         type=str,
-                        default='F1',
-                        choices=('NLL', 'EM', 'F1'),
+                        default='NLL',
+                        choices=('NLL'),
                         help='Name of dev metric to determine best checkpoint.')
     parser.add_argument('--max_checkpoints',
                         type=int,
@@ -83,7 +83,7 @@ def get_train_args():
                         help='Maximum gradient norm for gradient clipping.')
     parser.add_argument('--seed',
                         type=int,
-                        default=224,
+                        default=42,
                         help='Random seed for reproducibility.')
     parser.add_argument('--ema_decay',
                         type=float,
@@ -91,7 +91,7 @@ def get_train_args():
                         help='Decay rate for exponential moving average of parameters.')
 
     args = parser.parse_args()
-
+    args.maximize_metric = False
     return args
 
 
